@@ -36,7 +36,8 @@
 uint8_t running_status;
 volatile uint32_t timeout_counter;
 
-uint16_t led_idle_run;
+uint16_t led_idle_run = GPIO9;
+
 /* Pins PC[14:13] are used to detect hardware revision. Read
  * 11 for STLink V1 e.g. on VL Discovery, tag as hwversion 0
  * 10 for STLink V2 e.g. on F4 Discovery, tag as hwversion 1
@@ -59,6 +60,9 @@ int platform_hwversion(void)
 		default:
 			led_idle_run = GPIO9;
 		}
+
+        // hardcode for Bumpy
+        led_idle_run = GPIO9;
 	}
 	return hwversion;
 }
