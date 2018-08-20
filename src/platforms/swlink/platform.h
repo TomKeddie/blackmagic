@@ -58,23 +58,31 @@
 #define LED_PORT_UART	GPIOC
 #define LED_UART	GPIO14
 
+# define SWD_CR   GPIO_CRH(SWDIO_PORT)
+# define SWD_CR_MULT (1 << ((13 - 8) << 2))
+
 #define TMS_SET_MODE() \
 	gpio_set_mode(TMS_PORT, GPIO_MODE_OUTPUT_50_MHZ, \
 	              GPIO_CNF_OUTPUT_PUSHPULL, TMS_PIN);
-#define SWDIO_MODE_FLOAT() \
-	gpio_set_mode(SWDIO_PORT, GPIO_MODE_INPUT, \
-	              GPIO_CNF_INPUT_FLOAT, SWDIO_PIN);
-#define SWDIO_MODE_DRIVE() \
-	gpio_set_mode(SWDIO_PORT, GPIO_MODE_OUTPUT_50_MHZ, \
-	              GPIO_CNF_OUTPUT_PUSHPULL, SWDIO_PIN);
-
+#define SWDIO_MODE_FLOAT() 	do { \
+	uint32_t cr = SWD_CR; \
+	cr  &= ~(0xf * SWD_CR_MULT); \
+	cr  |=  (0x4 * SWD_CR_MULT); \
+	SWD_CR = cr; \
+} while(0)
+#define SWDIO_MODE_DRIVE() 	do { \
+	uint32_t cr = SWD_CR; \
+	cr  &= ~(0xf * SWD_CR_MULT); \
+	cr  |=  (0x1 * SWD_CR_MULT); \
+	SWD_CR = cr; \
+} while(0)
 #define UART_PIN_SETUP() do { \
 	AFIO_MAPR |= AFIO_MAPR_USART1_REMAP; \
 	gpio_set_mode(USBUSART_PORT, GPIO_MODE_OUTPUT_2_MHZ, \
 	              GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, USBUSART_TX_PIN); \
 } while (0)
 
-#define USB_DRIVER      stm32f103_usb_driver
+#define USB_DRIVER      st_usbfs_v1_usb_driver
 #define USB_IRQ         NVIC_USB_LP_CAN_RX0_IRQ
 #define USB_ISR         usb_lp_can_rx0_isr
 /* Interrupt priorities.  Low numbers are high priority.
@@ -106,7 +114,15 @@
 #define TRACE_IC_IN TIM_IC_IN_TI2
 #define TRACE_TRIG_IN TIM_SMCR_TS_IT1FP2
 
-#define DEBUG(...)
+#ifdef ENABLE_DEBUG
+# define PLATFORM_HAS_DEBUG
+# define USBUART_DEBUG
+extern bool debug_bmp;
+int usbuart_debug_write(const char *buf, size_t len);
+# define DEBUG printf
+#else
+# define DEBUG(...)
+#endif
 
 #define SET_RUN_STATE(state)	{running_status = (state);}
 #define SET_IDLE_STATE(state)	{gpio_set_val(LED_PORT, LED_IDLE_RUN, state);}

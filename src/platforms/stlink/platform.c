@@ -28,15 +28,17 @@
 
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/cm3/scb.h>
+#include <libopencm3/cm3/scs.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/usb/usbd.h>
 #include <libopencm3/stm32/adc.h>
 
 uint8_t running_status;
-volatile uint32_t timeout_counter;
 
-uint16_t led_idle_run = GPIO9;
+uint16_t led_idle_run;
+uint16_t srst_pin;
+static uint32_t rev;
 
 /* Pins PC[14:13] are used to detect hardware revision. Read
  * 11 for STLink V1 e.g. on VL Discovery, tag as hwversion 0
@@ -69,35 +71,27 @@ int platform_hwversion(void)
 
 void platform_init(void)
 {
+	rev = detect_rev();
+	SCS_DEMCR |= SCS_DEMCR_VC_MON_EN;
+#ifdef ENABLE_DEBUG
+	void initialise_monitor_handles(void);
+	initialise_monitor_handles();
+#endif
 	rcc_clock_setup_in_hse_8mhz_out_72mhz();
-
-	/* Enable peripherals */
-	rcc_periph_clock_enable(RCC_USB);
-	rcc_periph_clock_enable(RCC_GPIOA);
-	rcc_periph_clock_enable(RCC_GPIOB);
-	rcc_periph_clock_enable(RCC_GPIOC);
-	rcc_periph_clock_enable(RCC_AFIO);
-	rcc_periph_clock_enable(RCC_CRC);
-
-	/* On Rev 1 unconditionally activate MCO on PORTA8 with HSE
-	 * platform_hwversion() also needed to initialize led_idle_run!
-	 */
-	if (platform_hwversion() == 1)
-	{
-		RCC_CFGR &= ~(0xf << 24);
-		RCC_CFGR |= (RCC_CFGR_MCO_HSECLK << 24);
-		gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ,
-		GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO8);
+	if (rev == 0) {
+		led_idle_run = GPIO8;
+		srst_pin = SRST_PIN_V1;
+	} else {
+		led_idle_run = GPIO9;
+		srst_pin = SRST_PIN_V2;
 	}
 	/* Setup GPIO ports */
 	gpio_set_mode(TMS_PORT, GPIO_MODE_OUTPUT_50_MHZ,
-	              GPIO_CNF_OUTPUT_PUSHPULL, TMS_PIN);
+	              GPIO_CNF_INPUT_FLOAT, TMS_PIN);
 	gpio_set_mode(TCK_PORT, GPIO_MODE_OUTPUT_50_MHZ,
 	              GPIO_CNF_OUTPUT_PUSHPULL, TCK_PIN);
 	gpio_set_mode(TDI_PORT, GPIO_MODE_OUTPUT_50_MHZ,
 	              GPIO_CNF_OUTPUT_PUSHPULL, TDI_PIN);
-	uint16_t srst_pin = platform_hwversion() == 0 ?
-	                    SRST_PIN_V1 : SRST_PIN_V2;
 	gpio_set(SRST_PORT, srst_pin);
 	gpio_set_mode(SRST_PORT, GPIO_MODE_OUTPUT_50_MHZ,
 	              GPIO_CNF_OUTPUT_OPENDRAIN, srst_pin);
@@ -110,51 +104,39 @@ void platform_init(void)
 	SCB_VTOR = (uint32_t)&vector_table;
 
 	platform_timing_init();
+	if (rev > 1) /* Reconnect USB */
+		gpio_set(GPIOA, GPIO15);
 	cdcacm_init();
-	usbuart_init();
+	/* Don't enable UART if we're being debugged. */
+	if (!(SCS_DEMCR & SCS_DEMCR_TRCENA))
+		usbuart_init();
 }
 
 void platform_srst_set_val(bool assert)
 {
-	uint16_t pin;
-	pin = platform_hwversion() == 0 ? SRST_PIN_V1 : SRST_PIN_V2;
-	if (assert)
-		gpio_clear(SRST_PORT, pin);
-	else
-		gpio_set(SRST_PORT, pin);
+	uint32_t crl = GPIOB_CRL;
+	uint32_t shift = (srst_pin == GPIO0) ? 0 : 4;
+	uint32_t mask = 0xf << shift;
+	crl &= ~mask;
+	if (assert) {
+		/* Set SRST as Open-Drain, 50 Mhz, low.*/
+		GPIOB_BRR = srst_pin;
+		GPIOB_CRL = crl | (7 << shift);
+	} else {
+		/* Set SRST as input, pull-up.
+		 * SRST might be unconnected, e.g on Nucleo-P!*/
+		GPIOB_CRL = crl | (8 << shift);
+		GPIOB_BSRR = srst_pin;
+	}
+	while (gpio_get(SRST_PORT, srst_pin) == assert) {};
 }
 
 bool platform_srst_get_val()
 {
-	uint16_t pin;
-	pin = platform_hwversion() == 0 ? SRST_PIN_V1 : SRST_PIN_V2;
-	return gpio_get(SRST_PORT, pin) == 0;
+	return gpio_get(SRST_PORT, srst_pin) == 0;
 }
 
 const char *platform_target_voltage(void)
 {
 	return "unknown";
 }
-
-void platform_request_boot(void)
-{
-	/* Disconnect USB cable by resetting USB Device and pulling USB_DP low*/
-	rcc_periph_reset_pulse(RST_USB);
-	rcc_periph_clock_enable(RCC_USB);
-	rcc_periph_clock_enable(RCC_GPIOA);
-	gpio_clear(GPIOA, GPIO12);
-	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_2_MHZ,
-	              GPIO_CNF_OUTPUT_OPENDRAIN, GPIO12);
-
-	/* Assert bootloader pin */
-	uint32_t crl = GPIOA_CRL;
-	rcc_periph_clock_enable(RCC_GPIOA);
-	/* Enable Pull on GPIOA1. We don't rely on the external pin
-	 * really pulled, but only on the value of the CNF register
-	 * changed from the reset value
-	 */
-	crl &= 0xffffff0f;
-	crl |= 0x80;
-	GPIOA_CRL = crl;
-}
-

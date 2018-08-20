@@ -28,6 +28,7 @@
 
 #include <libopencm3/stm32/f1/rcc.h>
 #include <libopencm3/cm3/scb.h>
+#include <libopencm3/cm3/scs.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/usb/usbd.h>
@@ -36,6 +37,11 @@
 void platform_init(void)
 {
 	uint32_t data;
+	SCS_DEMCR |= SCS_DEMCR_VC_MON_EN;
+#ifdef ENABLE_DEBUG
+	void initialise_monitor_handles(void);
+	initialise_monitor_handles();
+#endif
 	rcc_clock_setup_in_hse_8mhz_out_72mhz();
 
 	/* Enable peripherals */
@@ -51,11 +57,11 @@ void platform_init(void)
 	data |= AFIO_MAPR_SWJ_CFG_JTAG_OFF_SW_OFF;
 	AFIO_MAPR = data;
 	/* Setup JTAG GPIO ports */
-	gpio_set_mode(TMS_PORT, GPIO_MODE_OUTPUT_10_MHZ,
-			GPIO_CNF_OUTPUT_PUSHPULL, TMS_PIN);
-	gpio_set_mode(TCK_PORT, GPIO_MODE_OUTPUT_10_MHZ,
+	gpio_set_mode(TMS_PORT, GPIO_MODE_OUTPUT_50_MHZ,
+			GPIO_CNF_INPUT_FLOAT, TMS_PIN);
+	gpio_set_mode(TCK_PORT, GPIO_MODE_OUTPUT_50_MHZ,
 			GPIO_CNF_OUTPUT_PUSHPULL, TCK_PIN);
-	gpio_set_mode(TDI_PORT, GPIO_MODE_OUTPUT_10_MHZ,
+	gpio_set_mode(TDI_PORT, GPIO_MODE_OUTPUT_50_MHZ,
 			GPIO_CNF_OUTPUT_PUSHPULL, TDI_PIN);
 
 	gpio_set_mode(TDO_PORT, GPIO_MODE_INPUT,
@@ -83,6 +89,9 @@ void platform_init(void)
 
 	platform_timing_init();
 	cdcacm_init();
+	/* Don't enable UART if we're being debugged. */
+	if (!(SCS_DEMCR & SCS_DEMCR_TRCENA))
+		usbuart_init();
 	usbuart_init();
 }
 
