@@ -40,9 +40,33 @@ uint16_t led_idle_run;
 uint16_t srst_pin;
 static uint32_t rev;
 
+/* Pins PC[14:13] are used to detect hardware revision. Read
+ * 11 for STLink V1 e.g. on VL Discovery, tag as hwversion 0
+ * 10 for STLink V2 e.g. on F4 Discovery, tag as hwversion 1
+ */
 int platform_hwversion(void)
 {
-	return rev;
+	static int hwversion = -1;
+	int i;
+	if (hwversion == -1) {
+		gpio_set_mode(GPIOC, GPIO_MODE_INPUT,
+		              GPIO_CNF_INPUT_PULL_UPDOWN, GPIO14 | GPIO13);
+		gpio_set(GPIOC, GPIO14 | GPIO13);
+		for (i = 0; i<10; i++)
+			hwversion = ~(gpio_get(GPIOC, GPIO14 | GPIO13) >> 13) & 3;
+		switch (hwversion)
+		{
+		case 0:
+			led_idle_run = GPIO8;
+			break;
+		default:
+			led_idle_run = GPIO9;
+		}
+
+        // hardcode for Bumpy
+        led_idle_run = GPIO9;
+	}
+	return hwversion;
 }
 
 void platform_init(void)
